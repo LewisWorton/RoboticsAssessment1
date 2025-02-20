@@ -1,0 +1,321 @@
+#region VEXcode Generated Robot Configuration
+import math
+import random
+from vexcode_vr import *
+
+# Brain should be defined by default
+brain=Brain()
+
+drivetrain = Drivetrain("drivetrain", 0)
+pen = Pen("pen", 8)
+pen.set_pen_width(THIN)
+left_bumper = Bumper("leftBumper", 2)
+right_bumper = Bumper("rightBumper", 3)
+front_eye = EyeSensor("frontEye", 4)
+down_eye = EyeSensor("downEye", 5)
+front_distance = Distance("frontdistance", 6)
+distance = front_distance
+magnet = Electromagnet("magnet", 7)
+location = Location("location", 9)
+
+#endregion
+
+class Bot: # Bot class stores mapping info and movement functions
+    def __init__ (self):
+        self.visited = set() # Set which stores the visited co-ords
+        self.walls = set() # Walls stored as co-ord pairs to note which paths aren't possible e.g. ((2, 3), (1, 3)) means a wall between those co-ords so the bot is not allowed to move between them
+        self.directions = [(0,1), (1,0), (0,-1), (-1,0)] # Possible directions for the bot: Up, Right, Down, Left
+        self.currentDirection = 0 # Current direction of the bot: 0 = Up, 1 = Right, 2 = Down, 3 = Left
+        self.position = (0, 0) # Bot starts at (0, 0)
+        self.startPos = self.position # Save start position (home)
+        self.exitPos = None # Bot does not know where exit is to begin with
+    
+    def turnLeft(self):
+        drivetrain.turn_for(LEFT, 90, DEGREES)
+        
+        nextPos = ( # Calculates next co-ord based on direction for wall mapping
+            self.position[0] + self.directions[(self.currentDirection - 1) % 4][0], # Current x co-ord + x co-ord 1 square ahead
+            self.position[1] + self.directions[(self.currentDirection - 1) % 4][1] # Current y co-rd + y co-ord 1 square ahead
+        )
+
+        if front_eye.near_object(): # If a wall is detected, add the current co-ords and the co-ords 1 step in-front to the set
+            self.walls.add((self.position, nextPos))
+
+        self.currentDirection = (self.currentDirection - 1) % 4 # Update current direction, calc uses % 4 to keep value 0-3
+
+    def turnRight(self):
+        drivetrain.turn_for(RIGHT, 90, DEGREES)
+
+        nextPos = ( # Same as left turn but 1 is added instead of subtracted to current direction to indicate right turn
+            self.position[0] + self.directions[(self.currentDirection + 1) % 4][0],
+            self.position[1] + self.directions[(self.currentDirection + 1) % 4][1]
+        )
+        
+        if front_eye.near_object():
+            self.walls.add((self.position, nextPos))
+        
+        self.currentDirection = (self.currentDirection + 1) % 4
+
+    def turnBearing(self, direction): # Turn to a heading instead of by 90 degrees, takes direction between 0-3 and multiplies by 90 to get bearing
+        drivetrain.turn_to_heading((direction * 90), DEGREES)
+
+    def moveForwardMapping(self):
+        nextPos = ( # Same as both turn functions but doesn't need to account for left/right turns by -/+ 1
+            self.position[0] + self.directions[self.currentDirection][0],
+            self.position[1] + self.directions[self.currentDirection][1]
+        )
+
+        if not front_eye.near_object(): # If there isn't a wall ahead, move forward otherwise add the wall co-ords to the set
+            drivetrain.drive_for(FORWARD, 250, MM)
+            self.visited.add(self.position) # Add the current co-ords to the visited set
+            self.position = nextPos # Update current position with the co-ords just moved to
+        else:
+            self.walls.add((self.position, nextPos))
+
+    def moveForwardPathing(self): # Simple drive forward when following a calculated path
+        drivetrain.drive_for(FORWARD, 250, MM)
+
+    # Getters and setters for required variables
+    def getDirections(self):
+        return self.directions
+
+    def getVisited(self):
+        return self.visited
+
+    def getWalls(self):
+        return self.walls
+
+    def getCurrentPos(self):
+        return self.position
+
+    def getStartPos(self):
+        return self.startPos
+
+    def getExitPos(self):
+        return self.exitPos
+
+    def getNumVisited(self):
+        return len(self.visited)
+
+    def setExitPos(self):
+        self.exitPos = self.position
+
+    def setCurrentPosAsExit(self):
+        self.position = self.exitPos
+
+def mapMaze(bot):
+    while True: # Continues mapping maze until exit condition is met
+        if bot.getCurrentPos() in bot.getVisited(): # If the bot is backtracking, stop mapping walls to increase mapping speed
+            bot.turnLeft() # Follow left side of maze
+        else: # If bot is mapping an unexplored area, map walls on either side of the bot
+            bot.turnLeft()
+            bot.turnRight()
+            bot.turnRight()
+            bot.turnLeft()
+            bot.turnLeft()
+        if front_eye.near_object(): # If a wall is detected, turn right
+            bot.turnRight()
+        if front_eye.near_object(): # If another wall is detected, turn right again
+            bot.turnRight()
+        # If distance is >= 3000mm and bot is at the start or at the exit, turn 180 degrees to avoid falling off the edge of the maze
+        elif front_distance.get_distance(MM) >= 3000 and (bot.getCurrentPos() is (0, 0) or down_eye.detect(RED)):
+            bot.turnLeft()
+            bot.turnLeft()
+        else: # If there are no walls or ledges, move forward 250mm to stay in grid layout
+            bot.moveForwardMapping()
+        
+        if down_eye.detect(RED): # If exit is found, mark exit position and continue mapping
+            bot.setExitPos()
+
+        if bot.getNumVisited() >= 58 and bot.getExitPos(): # When ~90% of the maze has been mapped and the exit has been found, stop mapping
+            break
+        wait(5, MSEC) # Waits are required within while loops to prevent program going unresponsive
+
+def calcShortestPath(bot, target): # Calculate shortest path to a target co-ord from current position using breadth-first search
+    currentPos = bot.getCurrentPos() # Intialise current bot position
+    queue = [(currentPos, [])] # Initialise queue for BFS with current co-ords and an empty path
+    visitedBFS = set() # Tracks visited co-ords during BFS
+
+    brain.new_line()
+    brain.print(f"Calculating path from {currentPos} to {target}.")
+
+    # Retrieve visited positions, possible movement directions and walls from the bot
+    botVisited = bot.getVisited()
+    directions = bot.getDirections()
+    walls = bot.getWalls()
+
+    while queue:
+        current, path = queue.pop(0) # Dequeue first position and it's associated path
+        if current == target: # Once exit is reached, return the shortest path
+            return path
+        
+        for changeX, changeY in directions: # Try moving in all directions
+            nextPos = (current[0] + changeX, current[1] + changeY)
+
+            if ((current, nextPos) not in walls and (nextPos, current) not in walls): # Check next co-ords aren't blocked by a wall, checks (current -> next position) and (next position -> current) co-ords
+                if nextPos not in visitedBFS and nextPos in botVisited: # If next co-ords haven't been visited during BFS and were visited during mapping:
+                    visitedBFS.add(nextPos) # Mark the position as visited during BFS and
+                    queue.append((nextPos, path + [nextPos])) # Enqueue the new position and the updated path
+
+        wait(5, MSEC)
+    
+    return None # If no path to the exit is found
+
+def followShortestPath(bot, path):
+    currentPos = bot.getCurrentPos() # Initialise current position
+    possibleDirections = { # Dictionary of possible co-ord movements and the related direction
+            (0, 1): 0,
+            (1, 0): 1,
+            (0, -1): 2,
+            (-1, 0): 3
+        }
+
+    if path[0] != currentPos: # Add current position to the path, otherwise bot will be moving 1 step behind the path
+        path.insert(0, currentPos)
+
+    for nextPos in path: # Loop through each position in the path
+        currentX, currentY = currentPos # Split co-ord positions into x and y
+        nextX, nextY = nextPos
+
+        directionX = nextX - currentX # Calculate difference between current and next co-ords to determine direction to move
+        directionY = nextY - currentY
+        nextCoords = (directionX, directionY)
+
+        brain.new_line()
+        brain.print(f"Current: {currentPos}, Next: {nextPos}, Delta: ({directionX}, {directionY})")
+
+        if nextCoords in possibleDirections: # Check next co-ords are a valid direction to move in
+            nextDirection = possibleDirections[nextCoords] # Get int representation of direction from dict
+            bot.turnBearing(nextDirection) # Turn to bearing based on direction
+            bot.moveForwardPathing()
+            currentPos = nextPos # Update position to co-ord just moved to
+        else:
+            brain.new_line()
+            brain.print(f"Invalid movement direction: {nextCoords}")
+        
+        wait(100, MSEC)
+
+def displayMap(bot):
+    gridSize = 17 # Maze is 8x8 but needs to be expanded to fit walls on the map
+    startPos = bot.getStartPos()
+    exitPos = bot.getExitPos()
+    visited = bot.getVisited()
+    walls = bot.getWalls()
+
+    grid = [["■" for _ in range(gridSize)] for _ in range(gridSize)] # Intialise array of 17x17 to represent map
+
+    # As map is 17x17 while maze is 8x8, X and Y co-ords need to be transformed to fit onto the bigger grid
+    def transformX(x):
+        return ((x + 5) * 2) - 1
+        # x + 5 : offsets co-ord as (0, 0) is the start in the maze which is (0, 5) from bottom left
+        # * 2 : scales the co-ord up to match the increased grid size
+        # - 1 : moves co-ord left to allow for wall around the edge
+
+    def transformY(y):
+        return ((7 - y) * 2) + 1
+        # 7 - y : flips the co-ord around as y = 0 is the top in the grid but bottom in the maze
+        # * 2 : scales the co-ord up to match the increased grid size
+        # + 1 : moves co-ord down to allow for wall at the top
+
+    transformedVisited = set() # stores visited co-ords after transform
+    for x, y in visited: # loop through visited co-ords and transform to fit map grid
+        tx = transformX(x)
+        ty = transformY(y)
+        transformedVisited.add((tx, ty))
+        grid[ty][tx] = "□" # adds visited co-ords to grid
+
+        # Expanding from a 8x8 to 17x17 grid leaves gaps between the visited co-ords which need to be filled
+        for (x2, y2) in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]: # Iterate over the adjacent co-ords of the visited set and transform them to the scaled up grid
+            tx2 = transformX(x2)
+            ty2 =transformY(y2)
+
+            if (tx2, ty2) in transformedVisited: # Check if the transformed adjacent co-ord is part of the post-transformation visited set
+                midX, midY = (tx + tx2) // 2, (ty + ty2) // 2 # Calculate the midpoint of the current transformed co-ord (tx, ty) and the adjacent transformed co-ord (tx2, ty2)
+                grid[midY][midX] = "□"  # Fill gaps between adjacent visited cells
+
+    for (a, b) in walls: # Add the mapped walls in
+        ax, ay = a # Split co-ord pairs into x and y
+        bx, by = b
+
+        ax = transformX(ax) # Transform co-ords to larger grid
+        ay = transformY(ay)
+        bx = transformX(bx)
+        by = transformY(by)
+
+        midX = (ax + bx) // 2 # Find midpoint of co-ords
+        midY = (ay + by) // 2
+
+        grid[midY][midX] = "■" # Add mapped walls to grid
+
+    sx, sy = startPos # Add start position to grid
+    sx = transformX(sx)
+    sy = transformY(sy)
+    grid[sy][sx] = "S"
+
+    ex, ey = exitPos # Add end position to grid
+    ex = transformX(ex)
+    ey = transformY(ey)
+    grid[ey][ex] = "E"
+    
+    # Print map
+    brain.new_line()
+    brain.print("Generated Map:")
+    brain.new_line()
+    for row in grid:
+        brain.print(" ".join(row))
+        brain.new_line()
+    brain.new_line()
+    brain.print("Legend:")
+    brain.new_line()
+    brain.print("■ = wall")
+    brain.new_line()
+    brain.print("□ = visited")
+    brain.new_line()
+    brain.print("S = start")
+    brain.new_line()
+    brain.print("E = exit")
+
+def main():
+    drivetrain.set_drive_velocity(100, PERCENT)
+    drivetrain.set_turn_velocity(100, PERCENT)
+    pen.set_pen_color(BLUE)
+    pen.move(DOWN)
+
+    bot = Bot() # Initialise bot
+
+    mapMaze(bot)
+    
+    shortestPath = calcShortestPath(bot, bot.getExitPos())
+
+    pen.set_pen_color(GREEN) # Change pen colour to green for following path
+
+    if shortestPath: # Check shortest path has been calculated
+        brain.new_line()
+        brain.print(f"Shortest Path: {shortestPath}")
+        followShortestPath(bot, shortestPath)
+        if down_eye.detect(RED): # If exit has been reached after following path, override current position to exit co-ords
+            bot.setCurrentPosAsExit()
+        else:
+            brain.new_line()
+            brain.print("Bot did not make it to exit.")
+    elif bot.getCurrentPos() == bot.getExitPos(): # Check if bot is already at the exit
+        brain.new_line()
+        brain.print("Already at exit.")
+    else:
+        brain.new_line()
+        brain.print("Unable to find a path to the exit from current location.")
+
+    pathHome = calcShortestPath(bot, bot.getStartPos())
+
+    if pathHome: # Check path home has been calculated
+        brain.new_line()
+        brain.print(f"Path home: {pathHome}")
+        followShortestPath(bot, pathHome)
+    else:
+        brain.new_line()
+        brain.print("Unable to find a path home from the exit.")
+
+    displayMap(bot) # Display a map of the maze
+
+# VR threads — Do not delete
+vr_thread(main)
