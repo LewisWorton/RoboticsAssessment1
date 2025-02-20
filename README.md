@@ -3,6 +3,8 @@
 
 In my project, the bot autonomously maps the maze, finds the shortest path to the exit using breadth-first search and then returns home.
 
+Video link - https://youtu.be/rjoR9NX0EHM
+
 ## Bot Process
 The bot follows these 3 main steps:
 
