@@ -18,7 +18,7 @@ distance = front_distance
 magnet = Electromagnet("magnet", 7)
 location = Location("location", 9)
 
-#endregion
+#endregion VEXcode Generated Robot Configuration
 
 class Bot: # Bot class stores mapping info and movement functions
     def __init__ (self):
@@ -117,6 +117,8 @@ def mapMaze(bot):
             bot.turnRight()
         if front_eye.near_object(): # If another wall is detected, turn right again
             bot.turnRight()
+        if front_eye.near_object(): # If another wall is detected, turn right to get out of dead-ends quicker
+            bot.turnRight()
         # If distance is >= 3000mm and bot is at the start or at the exit, turn 180 degrees to avoid falling off the edge of the maze
         elif front_distance.get_distance(MM) >= 3000 and (bot.getCurrentPos() is (0, 0) or down_eye.detect(RED)):
             bot.turnLeft()
@@ -133,7 +135,7 @@ def mapMaze(bot):
 
 def calcShortestPath(bot, target): # Calculate shortest path to a target co-ord from current position using breadth-first search
     currentPos = bot.getCurrentPos() # Intialise current bot position
-    queue = [(currentPos, [])] # Initialise queue for BFS with current co-ords and an empty path
+    queue = [(currentPos, [currentPos])] # Initialise queue for BFS with current co-ords and path starting from current position
     visitedBFS = set() # Tracks visited co-ords during BFS
 
     brain.new_line()
@@ -169,9 +171,6 @@ def followShortestPath(bot, path):
             (0, -1): 2,
             (-1, 0): 3
         }
-
-    if path[0] != currentPos: # Add current position to the path, otherwise bot will be moving 1 step behind the path
-        path.insert(0, currentPos)
 
     for nextPos in path: # Loop through each position in the path
         currentX, currentY = currentPos # Split co-ord positions into x and y
@@ -217,12 +216,12 @@ def displayMap(bot):
         # * 2 : scales the co-ord up to match the increased grid size
         # + 1 : moves co-ord down to allow for wall at the top
 
-    transformedVisited = set() # stores visited co-ords after transform
-    for x, y in visited: # loop through visited co-ords and transform to fit map grid
+    transformedVisited = set() # Stores visited co-ords after transform
+    for x, y in visited: # Iterate through visited co-ords and transform to fit map grid
         tx = transformX(x)
         ty = transformY(y)
         transformedVisited.add((tx, ty))
-        grid[ty][tx] = "□" # adds visited co-ords to grid
+        grid[ty][tx] = "□" # Adds visited co-ords to grid
 
         # Expanding from a 8x8 to 17x17 grid leaves gaps between the visited co-ords which need to be filled
         for (x2, y2) in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]: # Iterate over the adjacent co-ords of the visited set and transform them to the scaled up grid
